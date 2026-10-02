@@ -7,12 +7,20 @@ mkdir -p "$DIR" "$CONF"
 echo "Téléchargement du script..."
 curl -fsSL https://raw.githubusercontent.com/ChrisSorbadere/agenda-zaragoza/main/pc/agenda_zgz.py -o "$DIR/agenda_zgz.py"
 chmod +x "$DIR/agenda_zgz.py"
-if [ ! -s "$CONF/token" ]; then
+if [ "$1" = "--nouveau-jeton" ]; then rm -f "$CONF/token"; fi
+while [ ! -s "$CONF/token" ]; do
   echo
-  echo "Colle ton jeton GitHub (il ne s'affichera pas), puis Entrée :"
+  echo "Colle ton jeton GitHub avec Ctrl+Maj+V (il ne s'affichera pas), puis Entrée :"
   read -rs TOKEN; echo
-  printf '%s' "$TOKEN" > "$CONF/token"
-fi
+  TOKEN="$(printf '%s' "$TOKEN" | tr -d '[:space:]')"
+  case "$TOKEN" in
+    github_pat_*|ghp_*)
+      if curl -fsS -o /dev/null -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/ChrisSorbadere/agenda-zaragoza; then
+        printf '%s' "$TOKEN" > "$CONF/token"; echo "Jeton accepté."
+      else echo "❌ GitHub refuse ce jeton. Recommence."; fi ;;
+    *) echo "❌ Ce n'est pas un jeton GitHub (il doit commencer par github_pat_). Recommence." ;;
+  esac
+done
 chmod 600 "$CONF/token"
 # Tâches planifiées : au démarrage (après 3 min) + toutes les 2 heures.
 # Le script ne travaille qu'une fois par jour.
