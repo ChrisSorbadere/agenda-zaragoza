@@ -104,7 +104,10 @@ def occurrences(ev, hoy, fin):
         while d <= min(b, fin):
             if not jours or d.weekday() in jours: fechas.add(d)
             d += dt.timedelta(days=1)
-    return sorted(fechas), list(dict.fromkeys(horas))
+    def cle(h):
+        t = h.split(" ")[0]
+        return (ABR.index(t) if t in ABR else 9, h)
+    return sorted(fechas), sorted(dict.fromkeys(horas), key=cle)
 
 def lieu(ev):
     for s in L(ev.get("subEvent")):
@@ -148,6 +151,21 @@ def traiter(brut, hoy, fin):
         eventos.append({**base, "fechas": [f.isoformat() for f in fechas],
                         "horario": "; ".join(horas[:6]) or None,
                         "descripcion": texte(ev.get("description"))})
+    fus = {}
+    for e in eventos:
+        k = ((e["titulo"] or "").strip().lower(), (e["lugar"] or "").strip().lower())
+        if k in fus:
+            f = fus[k]
+            f["fechas"] = sorted(set(f["fechas"]) | set(e["fechas"]))
+            if e["horario"] and e["horario"] not in (f["horario"] or ""):
+                f["horario"] = "; ".join(x for x in (f["horario"], e["horario"]) if x)
+        else:
+            fus[k] = e
+    eventos = list(fus.values())
+    vus = {}
+    for x in expos:
+        vus.setdefault(((x["titulo"] or "").lower(), (x["lugar"] or "").lower()), x)
+    expos = list(vus.values())
     eventos.sort(key=lambda e: (e["fechas"][0], e["titulo"] or ""))
     expos.sort(key=lambda e: e["titulo"] or "")
     return eventos, expos, ecartes
