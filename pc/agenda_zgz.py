@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Relais local : télécharge l'agenda officiel de la mairie de Zaragoza
-(données ouvertes) depuis ce PC (en Espagne) et le publie dans le dépôt
-GitHub ChrisSorbadere/agenda-zaragoza (data/agenda.json).
-Ne s'exécute qu'une fois par jour, même s'il est lancé plusieurs fois."""
-import json, datetime, urllib.request, urllib.parse, base64, os, sys
+"""Relais local Agenda Zaragoza (v2).
+Télécharge depuis ce PC (en Espagne) l'agenda officiel de la mairie de Zaragoza
+(données ouvertes), le trie et le publie dans le dépôt GitHub
+ChrisSorbadere/agenda-zaragoza (data/agenda.json).
+- Se met à jour tout seul depuis le dépôt.
+- Ne publie qu'une fois par jour, même s'il est lancé plusieurs fois."""
+import json, datetime as dt, urllib.request, urllib.parse, urllib.error
+import base64, os, sys, re, html, time
 
 REPO = "ChrisSorbadere/agenda-zaragoza"
 CONF = os.path.expanduser("~/.config/agenda-zaragoza")
@@ -11,85 +14,143 @@ TOKEN_FILE = os.path.join(CONF, "token")
 STAMP = os.path.join(CONF, "derniere-execution")
 LOG = os.path.join(CONF, "journal.txt")
 API = "https://www.zaragoza.es/sede/servicio/cultura/evento/list.json"
+SELF_URL = f"https://raw.githubusercontent.com/{REPO}/main/pc/agenda_zgz.py"
+JOURS = 16          # fenêtre couverte
+LONG = 45           # au-delà : activité « permanente »
+DOW = {"lunes":0,"martes":1,"miercoles":2,"miércoles":2,"jueves":3,"viernes":4,
+       "sabado":5,"sábado":5,"domingo":6}
+ABR = ["lun","mar","mié","jue","vie","sáb","dom"]
 
 def log(msg):
-    line = f"{datetime.datetime.now():%Y-%m-%d %H:%M} {msg}"
+    line = f"{dt.datetime.now():%Y-%m-%d %H:%M} {msg}"
     print(line)
     with open(LOG, "a") as f: f.write(line + "\n")
 
-def http(url, data=None, method="GET", headers=None, timeout=90):
+def http(url, data=None, method="GET", headers=None, timeout=90, raw=False):
     h = {"User-Agent": "agenda-zaragoza-relais", "Accept": "application/json"}
     h.update(headers or {})
     req = urllib.request.Request(url, data=data, method=method, headers=h)
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.load(r)
+        return r.read() if raw else json.load(r)
 
-def pick(d, *keys):
-    if not isinstance(d, dict): return None
-    for k in keys:
-        v = d.get(k)
-        if v not in (None, "", []): return v
-    return None
+def auto_maj():
+    """Remplace ce script par la dernière version du dépôt si elle a changé."""
+    if os.environ.get("AGENDA_ZGZ_MAJ"): return
+    try:
+        neuf = http(f"{SELF_URL}?t={int(time.time())}", raw=True, timeout=30)
+        moi = os.path.abspath(__file__)
+        if neuf and neuf != open(moi, "rb").read():
+            compile(neuf, moi, "exec")
+            open(moi, "wb").write(neuf)
+            log("script mis à jour depuis GitHub")
+            os.environ["AGENDA_ZGZ_MAJ"] = "1"
+            os.execv(sys.executable, [sys.executable, moi] + sys.argv[1:])
+    except Exception as e:
+        log(f"mise à jour impossible ({e}), on continue avec la version actuelle")
 
-def as_list(x):
+def L(x):
     if x is None: return []
     return x if isinstance(x, list) else [x]
 
-def lugar(ev):
-    for s in as_list(ev.get("subEvent")):
-        loc = s.get("location") if isinstance(s, dict) else None
-        n = pick(loc, "title", "name")
-        if n: return n
-    return pick(ev.get("location"), "title", "name")
+def d10(s):
+    try: return dt.date.fromisoformat((s or "")[:10])
+    except ValueError: return None
 
-def horario(ev):
-    for s in as_list(ev.get("subEvent")):
-        h = pick(s, "horario", "openingHours")
-        if h: return h
-    return pick(ev, "horario", "openingHours")
+def texte(s, n=220):
+    s = html.unescape(re.sub(r"<[^>]+>", " ", s or ""))
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:n] + ("…" if len(s) > n else "")
+
+def sans_accent(s):
+    return (s or "").lower().replace("é","e").replace("á","a")
 
 def telecharger(hoy, fin):
-    eventos, primera, start, rows = [], None, 0, 500
+    eventos, start, rows = [], 0, 500
     fq = f"startDate:[* TO {fin}T23:59:59Z] AND endDate:[{hoy}T00:00:00Z TO *]"
     filtro = True
     while True:
-        params = {"rows": rows, "start": start}
-        if filtro: params["fq"] = fq
+        p = {"rows": rows, "start": start}
+        if filtro: p["fq"] = fq
         try:
-            data = http(API + "?" + urllib.parse.urlencode(params))
+            data = http(API + "?" + urllib.parse.urlencode(p))
         except Exception as e:
             if filtro and start == 0:
                 log(f"filtre de dates refusé ({e}), nouvel essai sans filtre")
-                filtro = False
-                continue
+                filtro = False; continue
             raise
-        if primera is None: primera = data
-        res = as_list(data.get("result") or data.get("results"))
+        res = L(data.get("result"))
         eventos.extend(res)
-        total = data.get("totalCount") or 0
         start += rows
-        if not res or start >= total or start >= 6000: break
-    return eventos, primera, filtro
+        if not res or start >= (data.get("totalCount") or 0) or start >= 8000: break
+    return eventos
 
-def simplifier(eventos, hoy, fin):
+def occurrences(ev, hoy, fin):
+    """Dates (dans la fenêtre) où l'activité a lieu, et horaires lisibles."""
+    fechas, horas = set(), []
+    subs = L(ev.get("subEvent")) or [ev]
+    for s in subs:
+        a = d10(s.get("startDate")) or d10(ev.get("startDate"))
+        b = d10(s.get("endDate")) or d10(ev.get("endDate")) or a
+        if not a: continue
+        jours = set()
+        for oh in L(s.get("openingHours")):
+            if not isinstance(oh, dict): continue
+            j = DOW.get(sans_accent(oh.get("dayOfWeek")))
+            t = "-".join(x for x in (oh.get("startTime"), oh.get("endTime")) if x)
+            if j is not None:
+                jours.add(j); horas.append(f"{ABR[j]} {t}".strip())
+            elif t: horas.append(t)
+        d = max(a, hoy)
+        while d <= min(b, fin):
+            if not jours or d.weekday() in jours: fechas.add(d)
+            d += dt.timedelta(days=1)
+    return sorted(fechas), list(dict.fromkeys(horas))
+
+def lieu(ev):
+    for s in L(ev.get("subEvent")):
+        t = (s.get("location") or {}).get("title") if isinstance(s.get("location"), dict) else None
+        if t and "por determinar" not in t.lower(): return t
+    return ev.get("location") if isinstance(ev.get("location"), str) and ev.get("location") else None
+
+def prix(ev):
     out = []
-    for ev in eventos:
-        ini = (pick(ev, "startDate") or "")[:10]
-        fn = (pick(ev, "endDate") or ini)[:10]
-        if ini and not (ini <= fin and fn >= hoy): continue
-        cats = [pick(c, "title", "name") for c in as_list(ev.get("category")) if isinstance(c, dict)]
-        out.append({
-            "titulo": pick(ev, "title"),
-            "inicio": ini, "fin": fn,
-            "horario": horario(ev), "lugar": lugar(ev),
-            "categorias": [c for c in cats if c],
-            "precio": pick(ev, "price", "precio"),
-            "descripcion": (pick(ev, "description") or "")[:300],
-            "url": (f"https://www.zaragoza.es/sede/servicio/cultura/evento/{ev['id']}"
-                    if ev.get("id") else pick(ev, "web", "url")),
-        })
-    out.sort(key=lambda e: (e["inicio"] or "", e["titulo"] or ""))
-    return out
+    for p in L(ev.get("price")):
+        if not isinstance(p, dict): continue
+        g, v = p.get("fareGroup"), p.get("hasCurrencyValue")
+        if v in (0, "0") or (g and "gratu" in g.lower()): out.append("Gratuit")
+        elif v not in (None, ""): out.append(f"{g+' ' if g else ''}{v} €")
+    return ", ".join(dict.fromkeys(out)) or None
+
+def traiter(brut, hoy, fin):
+    eventos, expos, ecartes = [], [], 0
+    for ev in brut:
+        fechas, horas = occurrences(ev, hoy, fin)
+        if not fechas: continue
+        a = d10(ev.get("startDate")); b = d10(ev.get("endDate")) or a
+        duree = (b - a).days if a and b else 0
+        cats = [c.get("title") for c in L(ev.get("category")) if isinstance(c, dict) and c.get("title")]
+        base = {
+            "titulo": ev.get("title"),
+            "lugar": lieu(ev),
+            "categorias": cats,
+            "tipo": ev.get("type"),
+            "publico": [p.get("title") for p in L(ev.get("population")) if isinstance(p, dict)] or None,
+            "precio": prix(ev),
+            "url": ev.get("alt") or f"https://www.zaragoza.es/sede/servicio/cultura/evento/{ev.get('id')}",
+        }
+        if duree > LONG:
+            if any(c in ("Exposiciones", "Artes plásticas") for c in cats) or "xposici" in (ev.get("type") or ""):
+                expos.append({**base, "hasta": b.isoformat() if b else None,
+                              "horario": "; ".join(horas[:4]) or None})
+            else:
+                ecartes += 1   # ateliers permanents, itinéraires valables des années…
+            continue
+        eventos.append({**base, "fechas": [f.isoformat() for f in fechas],
+                        "horario": "; ".join(horas[:6]) or None,
+                        "descripcion": texte(ev.get("description"))})
+    eventos.sort(key=lambda e: (e["fechas"][0], e["titulo"] or ""))
+    expos.sort(key=lambda e: e["titulo"] or "")
+    return eventos, expos, ecartes
 
 def publier(token, chemin, contenu, message):
     url = f"https://api.github.com/repos/{REPO}/contents/{chemin}"
@@ -105,33 +166,32 @@ def publier(token, chemin, contenu, message):
 
 def main():
     os.makedirs(CONF, exist_ok=True)
-    today = datetime.date.today()
+    auto_maj()
+    today = dt.date.today()
     force = "--force" in sys.argv
     if not force and os.path.exists(STAMP) and open(STAMP).read().strip() == today.isoformat():
-        return  # déjà fait aujourd'hui
+        return
     token = open(TOKEN_FILE).read().strip()
-    hoy, fin = today.isoformat(), (today + datetime.timedelta(days=16)).isoformat()
+    hoy, fin = today, today + dt.timedelta(days=JOURS)
     try:
-        eventos, primera, filtro = telecharger(hoy, fin)
+        brut = telecharger(hoy.isoformat(), fin.isoformat())
     except Exception as e:
         log(f"ÉCHEC téléchargement mairie : {e}"); sys.exit(1)
-    salida = simplifier(eventos, hoy, fin)
-    meta = {"generado": datetime.datetime.now().isoformat(timespec="minutes"),
-            "desde": hoy, "hasta": fin, "filtro_fechas_api": filtro,
-            "total": len(salida),
+    eventos, expos, ecartes = traiter(brut, hoy, fin)
+    meta = {"generado": dt.datetime.now().isoformat(timespec="minutes"),
+            "desde": hoy.isoformat(), "hasta": fin.isoformat(),
+            "eventos": len(eventos), "exposiciones": len(expos),
+            "permanentes_descartados": ecartes, "version": 2,
             "fuente": "Ayuntamiento de Zaragoza - Datos abiertos (Agenda de Zaragoza)"}
     try:
         publier(token, "data/agenda.json",
-                json.dumps({"meta": meta, "eventos": salida}, ensure_ascii=False, indent=1),
-                f"Agenda {hoy} ({len(salida)} eventos)")
-        if primera is not None:
-            ech = dict(primera); ech["result"] = as_list(primera.get("result"))[:3]
-            publier(token, "data/agenda-muestra.json",
-                    json.dumps(ech, ensure_ascii=False, indent=1), f"Muestra {hoy}")
+                json.dumps({"meta": meta, "eventos": eventos, "exposiciones": expos},
+                           ensure_ascii=False, separators=(",", ":")),
+                f"Agenda {hoy} ({len(eventos)} eventos, {len(expos)} expos)")
     except Exception as e:
         log(f"ÉCHEC envoi GitHub : {e}"); sys.exit(1)
-    open(STAMP, "w").write(hoy)
-    log(f"OK : {len(salida)} événements publiés ({hoy} → {fin})")
+    open(STAMP, "w").write(hoy.isoformat())
+    log(f"OK : {len(eventos)} événements + {len(expos)} expositions publiés ({hoy} → {fin})")
 
 if __name__ == "__main__":
     main()
