@@ -1,0 +1,3 @@
+Filtro de fechas rechazado, se reintenta sin filtro: <urlopen error timed out>
+ERROR al descargar: <urlopen error timed out>
+FALLO exit=1
