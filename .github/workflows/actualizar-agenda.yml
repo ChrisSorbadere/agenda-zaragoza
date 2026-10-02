@@ -9,10 +9,12 @@ jobs:
   actualizar:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.12" }
-      - run: python scripts/fetch_agenda.py
+      - name: Descargar agenda
+        run: python scripts/fetch_agenda.py > data/log.txt 2>&1 || echo "FALLO exit=$?" >> data/log.txt
+      - run: cat data/log.txt
       - name: Guardar cambios
         run: |
           git config user.name "agenda-bot"
