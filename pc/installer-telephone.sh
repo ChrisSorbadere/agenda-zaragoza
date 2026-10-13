@@ -1,13 +1,13 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Installation du relais "Agenda Zaragoza" sur Android (Termux) — à lancer une seule fois
-set -e
+# Installation du relais "Agenda Zaragoza" sur Android (Termux du Play Store) — à lancer une seule fois
 echo "📦 Installation des outils (1 à 3 minutes)..."
-pkg install -y python termux-api curl >/dev/null 2>&1 || { echo "❌ Échec de l'installation des paquets. Lance 'pkg update' puis recommence."; exit 1; }
+pkg install -y python curl >/dev/null 2>&1 || { echo "❌ Échec de l'installation. Tape : pkg update   puis recommence."; exit 1; }
 
 DIR="$HOME/.local/share/agenda-zaragoza"
 CONF="$HOME/.config/agenda-zaragoza"
 mkdir -p "$DIR" "$CONF"
-curl -fsSL "https://raw.githubusercontent.com/ChrisSorbadere/agenda-zaragoza/main/pc/agenda_zgz.py?t=$(date +%s)" -o "$DIR/agenda_zgz.py"
+curl -fsSL "https://raw.githubusercontent.com/ChrisSorbadere/agenda-zaragoza/main/pc/agenda_zgz.py?t=$(date +%s)" -o "$DIR/agenda_zgz.py" \
+  || { echo "❌ Téléchargement du script impossible. Vérifie la connexion."; exit 1; }
 
 if [ "$1" = "--nouveau-jeton" ]; then rm -f "$CONF/token"; fi
 while [ ! -s "$CONF/token" ]; do
@@ -25,20 +25,33 @@ while [ ! -s "$CONF/token" ]; do
 done
 chmod 600 "$CONF/token"
 
-# Lanceur appelé par Android
-cat > "$DIR/lancer.sh" <<LANCEUR
+# Boucle de fond : relance le relais toutes les 2 heures (il ne publie qu'une fois par jour)
+cat > "$DIR/boucle.sh" <<BOUCLE
 #!/data/data/com.termux/files/usr/bin/bash
-python "$DIR/agenda_zgz.py" >> "$CONF/lancements.txt" 2>&1
-LANCEUR
-chmod +x "$DIR/lancer.sh"
+PIDF="$CONF/boucle.pid"
+if [ -f "\$PIDF" ] && kill -0 "\$(cat "\$PIDF")" 2>/dev/null; then exit 0; fi
+echo \$\$ > "\$PIDF"
+while true; do
+  python "$DIR/agenda_zgz.py" >> "$CONF/lancements.txt" 2>&1
+  sleep 7200
+done
+BOUCLE
+chmod +x "$DIR/boucle.sh"
 
-echo
-echo "⏰ Programmation (toutes les 2 heures, quand il y a du réseau)..."
-termux-job-scheduler --cancel --job-id 1717 >/dev/null 2>&1 || true
-timeout 20 termux-job-scheduler --job-id 1717 --script "$DIR/lancer.sh" \
-  --period-ms 7200000 --persisted true --network any >/dev/null 2>&1 \
-  || { echo "❌ La programmation a échoué : l'application Termux:API est-elle installée ?"; exit 1; }
+# Démarrage automatique à chaque ouverture de Termux
+touch "$HOME/.bashrc"
+grep -v "agenda-zaragoza" "$HOME/.bashrc" > "$HOME/.bashrc.tmp" || true
+mv "$HOME/.bashrc.tmp" "$HOME/.bashrc"
+cat >> "$HOME/.bashrc" <<RC
+termux-wake-lock 2>/dev/null; nohup "$DIR/boucle.sh" >/dev/null 2>&1 &   # agenda-zaragoza
+RC
 
 echo
 echo "🚀 Premier essai..."
-python "$DIR/agenda_zgz.py" --force && echo && echo "✅ Installation terminée. Le téléphone mettra l'agenda à jour tout seul chaque jour."
+if python "$DIR/agenda_zgz.py" --force; then
+  termux-wake-lock 2>/dev/null; nohup "$DIR/boucle.sh" >/dev/null 2>&1 &
+  echo
+  echo "✅ Installation terminée."
+  echo "Laisse Termux ouvert en arrière-plan (ne le ferme pas depuis les applis récentes)."
+  echo "Après un redémarrage du téléphone, ouvre simplement Termux une fois."
+fi
