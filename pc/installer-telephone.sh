@@ -43,13 +43,13 @@ touch "$HOME/.bashrc"
 grep -v "agenda-zaragoza" "$HOME/.bashrc" > "$HOME/.bashrc.tmp" || true
 mv "$HOME/.bashrc.tmp" "$HOME/.bashrc"
 cat >> "$HOME/.bashrc" <<RC
-termux-wake-lock 2>/dev/null; nohup "$DIR/boucle.sh" >/dev/null 2>&1 &   # agenda-zaragoza
+( nohup python "$DIR/agenda_zgz.py" >> "$CONF/lancements.txt" 2>&1 & ) ; ( nohup "$DIR/boucle.sh" >/dev/null 2>&1 & )   # agenda-zaragoza
 RC
 
 echo
 echo "🚀 Premier essai..."
 if python "$DIR/agenda_zgz.py" --force; then
-  termux-wake-lock 2>/dev/null; nohup "$DIR/boucle.sh" >/dev/null 2>&1 &
+  ( nohup "$DIR/boucle.sh" >/dev/null 2>&1 & )
   echo
   echo "✅ Installation terminée."
   echo "Laisse Termux ouvert en arrière-plan (ne le ferme pas depuis les applis récentes)."

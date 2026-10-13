@@ -48,6 +48,25 @@ def auto_maj():
     except Exception as e:
         log(f"mise à jour impossible ({e}), on continue avec la version actuelle")
 
+def entretien_termux():
+    """Sur Android (Termux) : libère le maintien en éveil et met à jour la ligne
+    de démarrage du relais dans ~/.bashrc (lance aussi un essai à chaque ouverture)."""
+    if "com.termux" not in os.environ.get("PREFIX", ""): return
+    try:
+        os.system("termux-wake-unlock >/dev/null 2>&1")
+        rc = os.path.expanduser("~/.bashrc")
+        moi = os.path.abspath(__file__)
+        dossier = os.path.dirname(moi)
+        ligne = (f'( nohup python "{moi}" >> "{CONF}/lancements.txt" 2>&1 & ) ; '
+                 f'( nohup "{dossier}/boucle.sh" >/dev/null 2>&1 & )   # agenda-zaragoza\n')
+        lignes = open(rc).read().splitlines(True) if os.path.exists(rc) else []
+        autres = [l for l in lignes if "agenda-zaragoza" not in l]
+        if lignes != autres + [ligne]:
+            open(rc, "w").write("".join(autres + [ligne]))
+            log("démarrage Termux mis à jour (sans maintien en éveil)")
+    except Exception as e:
+        log(f"entretien Termux impossible : {e}")
+
 def L(x):
     if x is None: return []
     return x if isinstance(x, list) else [x]
@@ -185,6 +204,7 @@ def publier(token, chemin, contenu, message):
 def main():
     os.makedirs(CONF, exist_ok=True)
     auto_maj()
+    entretien_termux()
     today = dt.date.today()
     force = "--force" in sys.argv
     if not force and os.path.exists(STAMP) and open(STAMP).read().strip() == today.isoformat():
