@@ -57,8 +57,8 @@ def entretien_termux():
         rc = os.path.expanduser("~/.bashrc")
         moi = os.path.abspath(__file__)
         dossier = os.path.dirname(moi)
-        ligne = (f'( nohup python "{moi}" >> "{CONF}/lancements.txt" 2>&1 & ) ; '
-                 f'( nohup "{dossier}/boucle.sh" >/dev/null 2>&1 & )   # agenda-zaragoza\n')
+        ligne = f'( nohup python "{moi}" >> "{CONF}/lancements.txt" 2>&1 & )   # agenda-zaragoza\n'
+        os.system(f'pkill -f "{dossier}/boucle.sh" >/dev/null 2>&1')
         lignes = open(rc).read().splitlines(True) if os.path.exists(rc) else []
         autres = [l for l in lignes if "agenda-zaragoza" not in l]
         if lignes != autres + [ligne]:
@@ -201,8 +201,19 @@ def publier(token, chemin, contenu, message):
     http(url, data=json.dumps(body).encode(), method="PUT",
          headers={**hd, "Content-Type": "application/json"})
 
+def verrou():
+    """Empêche deux relais de tourner en même temps (sinon conflit GitHub 409)."""
+    import fcntl
+    f = open(os.path.join(CONF, "relais.lock"), "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        sys.exit(0)
+    return f
+
 def main():
     os.makedirs(CONF, exist_ok=True)
+    _v = verrou()
     auto_maj()
     entretien_termux()
     today = dt.date.today()

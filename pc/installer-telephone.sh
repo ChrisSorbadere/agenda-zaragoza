@@ -25,33 +25,30 @@ while [ ! -s "$CONF/token" ]; do
 done
 chmod 600 "$CONF/token"
 
-# Boucle de fond : relance le relais toutes les 2 heures (il ne publie qu'une fois par jour)
-cat > "$DIR/boucle.sh" <<BOUCLE
-#!/data/data/com.termux/files/usr/bin/bash
-PIDF="$CONF/boucle.pid"
-if [ -f "\$PIDF" ] && kill -0 "\$(cat "\$PIDF")" 2>/dev/null; then exit 0; fi
-echo \$\$ > "\$PIDF"
-while true; do
-  python "$DIR/agenda_zgz.py" >> "$CONF/lancements.txt" 2>&1
-  sleep 7200
-done
-BOUCLE
-chmod +x "$DIR/boucle.sh"
+# Lanceur du relais
+printf '#!/data/data/com.termux/files/usr/bin/bash\npython "$HOME/.local/share/agenda-zaragoza/agenda_zgz.py" >> "$HOME/.config/agenda-zaragoza/lancements.txt" 2>&1\n' > "$HOME/relais.sh"
+chmod +x "$HOME/relais.sh"
 
-# Démarrage automatique à chaque ouverture de Termux
+# Planificateur Android (intégré à Termux du Play Store) : toutes les 2 heures, même si Termux est fermé
+command -v termux-job-scheduler >/dev/null || pkg install -y termux-api >/dev/null 2>&1
+termux-job-scheduler --cancel --job-id 1717 >/dev/null 2>&1
+termux-job-scheduler --job-id 1717 --script "$HOME/relais.sh" --period-ms 7200000 --persisted true --network any >/dev/null
+
+# Démarrage automatique au redémarrage du téléphone
+mkdir -p "$HOME/.termux/boot"
+cp "$HOME/relais.sh" "$HOME/.termux/boot/agenda.sh"; chmod +x "$HOME/.termux/boot/agenda.sh"
+
+# Essai à chaque ouverture de Termux
 touch "$HOME/.bashrc"
 grep -v "agenda-zaragoza" "$HOME/.bashrc" > "$HOME/.bashrc.tmp" || true
 mv "$HOME/.bashrc.tmp" "$HOME/.bashrc"
-cat >> "$HOME/.bashrc" <<RC
-( nohup python "$DIR/agenda_zgz.py" >> "$CONF/lancements.txt" 2>&1 & ) ; ( nohup "$DIR/boucle.sh" >/dev/null 2>&1 & )   # agenda-zaragoza
-RC
+echo '( nohup python "$HOME/.local/share/agenda-zaragoza/agenda_zgz.py" >> "$HOME/.config/agenda-zaragoza/lancements.txt" 2>&1 & )   # agenda-zaragoza' >> "$HOME/.bashrc"
 
 echo
 echo "🚀 Premier essai..."
 if python "$DIR/agenda_zgz.py" --force; then
-  ( nohup "$DIR/boucle.sh" >/dev/null 2>&1 & )
   echo
-  echo "✅ Installation terminée."
-  echo "Laisse Termux ouvert en arrière-plan (ne le ferme pas depuis les applis récentes)."
-  echo "Après un redémarrage du téléphone, ouvre simplement Termux une fois."
+  termux-job-scheduler -p
+  echo
+  echo "✅ Installation terminée. Android relancera le relais toutes les 2 heures, même Termux fermé."
 fi
