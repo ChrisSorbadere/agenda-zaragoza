@@ -201,6 +201,22 @@ def publier(token, chemin, contenu, message):
     http(url, data=json.dumps(body).encode(), method="PUT",
          headers={**hd, "Content-Type": "application/json"})
 
+def replanifier():
+    """Sur Android : si le planificateur a perdu la tâche du relais, la recrée."""
+    if "com.termux" not in os.environ.get("PREFIX", ""): return
+    import subprocess
+    try:
+        r = subprocess.run(["termux-job-scheduler", "-p"], capture_output=True, text=True, timeout=30)
+        if "1717" in (r.stdout or ""): return
+        script = os.path.expanduser("~/relais.sh")
+        if not os.path.exists(script): return
+        subprocess.run(["termux-job-scheduler", "--job-id", "1717", "--script", script,
+                        "--period-ms", "7200000", "--persisted", "true", "--network", "any"],
+                       capture_output=True, text=True, timeout=30)
+        log("planification Android recréée")
+    except Exception as e:
+        log(f"replanification impossible : {e}")
+
 def verrou():
     """Empêche deux relais de tourner en même temps (sinon conflit GitHub 409)."""
     import fcntl
@@ -216,6 +232,7 @@ def main():
     _v = verrou()
     auto_maj()
     entretien_termux()
+    replanifier()
     today = dt.date.today()
     force = "--force" in sys.argv
     if not force and os.path.exists(STAMP) and open(STAMP).read().strip() == today.isoformat():
