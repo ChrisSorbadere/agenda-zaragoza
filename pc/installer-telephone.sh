@@ -38,6 +38,13 @@ termux-job-scheduler --job-id 1717 --script "$HOME/relais.sh" --period-ms 720000
 mkdir -p "$HOME/.termux/boot"
 cp "$HOME/relais.sh" "$HOME/.termux/boot/agenda.sh"; chmod +x "$HOME/.termux/boot/agenda.sh"
 
+# Déclenchement par partage de lien (utilisé par MacroDroid chaque matin à 8 h :
+# action « Envoyer un Intent » SEND, text/plain, com.termux / com.termux.app.TermuxFileReceiverActivity,
+# extra android.intent.extra.TEXT = https://www.zaragoza.es)
+mkdir -p "$HOME/bin"
+printf '#!/data/data/com.termux/files/usr/bin/bash\necho "$(date "+%%Y-%%m-%%d %%H:%%M") déclenché par MacroDroid" >> "$HOME/.config/agenda-zaragoza/journal.txt"\n"$HOME/relais.sh"\n' > "$HOME/bin/termux-url-opener"
+chmod +x "$HOME/bin/termux-url-opener"
+
 # Essai à chaque ouverture de Termux
 touch "$HOME/.bashrc"
 grep -v "agenda-zaragoza" "$HOME/.bashrc" > "$HOME/.bashrc.tmp" || true
