@@ -236,6 +236,9 @@ def verrou():
     try:
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
+        if sys.stdout.isatty():
+            print("⏳ Un relais est déjà en cours en arrière-plan : laisse Termux ouvert.\n"
+                  "   Pour suivre : tail -n 5 ~/.config/agenda-zaragoza/journal.txt")
         sys.exit(0)
     return f
 
@@ -248,6 +251,8 @@ def main():
     today = dt.date.today()
     force = "--force" in sys.argv
     if not force and os.path.exists(STAMP) and open(STAMP).read().strip() == today.isoformat():
+        if sys.stdout.isatty():
+            print("✅ La liste d'aujourd'hui est déjà publiée. Rien à faire.")
         return
     token = open(TOKEN_FILE).read().strip()
     hoy, fin = today, today + dt.timedelta(days=JOURS)
