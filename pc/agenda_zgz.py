@@ -4,7 +4,8 @@ Télécharge depuis ce PC (en Espagne) l'agenda officiel de la mairie de Zaragoz
 (données ouvertes), le trie et le publie dans le dépôt GitHub
 ChrisSorbadere/agenda-zaragoza (data/agenda.json).
 - Se met à jour tout seul depuis le dépôt.
-- Ne publie qu'une fois par jour, même s'il est lancé plusieurs fois."""
+- Ne publie qu'une fois par jour, même s'il est lancé plusieurs fois.
+- En cas de coupure réseau, réessaie 3 fois à 30 s d'intervalle."""
 import json, datetime as dt, urllib.request, urllib.parse, urllib.error
 import base64, os, sys, re, html, time
 
@@ -26,12 +27,22 @@ def log(msg):
     print(line)
     with open(LOG, "a") as f: f.write(line + "\n")
 
+ESSAIS, PAUSE = 3, 30   # coupure réseau : 3 essais espacés de 30 s
+
 def http(url, data=None, method="GET", headers=None, timeout=90, raw=False):
     h = {"User-Agent": "agenda-zaragoza-relais", "Accept": "application/json"}
     h.update(headers or {})
-    req = urllib.request.Request(url, data=data, method=method, headers=h)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read() if raw else json.load(r)
+    for essai in range(1, ESSAIS + 1):
+        req = urllib.request.Request(url, data=data, method=method, headers=h)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read() if raw else json.load(r)
+        except urllib.error.HTTPError:
+            raise   # le serveur a répondu : pas une coupure réseau
+        except (urllib.error.URLError, OSError) as e:
+            if essai == ESSAIS: raise
+            log(f"réseau indisponible ({e}), nouvel essai dans {PAUSE} s ({essai}/{ESSAIS - 1})")
+            time.sleep(PAUSE)
 
 def auto_maj():
     """Remplace ce script par la dernière version du dépôt si elle a changé."""
