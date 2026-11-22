@@ -5,7 +5,7 @@ Télécharge depuis ce PC (en Espagne) l'agenda officiel de la mairie de Zaragoz
 ChrisSorbadere/agenda-zaragoza (data/agenda.json).
 - Se met à jour tout seul depuis le dépôt.
 - Ne publie qu'une fois par jour, même s'il est lancé plusieurs fois.
-- En cas de coupure réseau, réessaie 3 fois à 30 s d'intervalle."""
+- En cas de coupure réseau, réessaie 4 fois (après 1, 2, 5 et 5 min)."""
 import json, datetime as dt, urllib.request, urllib.parse, urllib.error
 import base64, os, sys, re, html, time
 
@@ -27,12 +27,13 @@ def log(msg):
     print(line)
     with open(LOG, "a") as f: f.write(line + "\n")
 
-ESSAIS, PAUSE = 3, 30   # coupure réseau : 3 essais espacés de 30 s
+PAUSES = [60, 120, 300, 300]   # coupure réseau : 5 essais, pauses de 1, 2, 5 et 5 min
 
-def http(url, data=None, method="GET", headers=None, timeout=90, raw=False):
+def http(url, data=None, method="GET", headers=None, timeout=90, raw=False, pauses=None):
     h = {"User-Agent": "agenda-zaragoza-relais", "Accept": "application/json"}
     h.update(headers or {})
-    for essai in range(1, ESSAIS + 1):
+    pauses = PAUSES if pauses is None else pauses
+    for essai in range(len(pauses) + 1):
         req = urllib.request.Request(url, data=data, method=method, headers=h)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -40,15 +41,15 @@ def http(url, data=None, method="GET", headers=None, timeout=90, raw=False):
         except urllib.error.HTTPError:
             raise   # le serveur a répondu : pas une coupure réseau
         except (urllib.error.URLError, OSError) as e:
-            if essai == ESSAIS: raise
-            log(f"réseau indisponible ({e}), nouvel essai dans {PAUSE} s ({essai}/{ESSAIS - 1})")
-            time.sleep(PAUSE)
+            if essai == len(pauses): raise
+            log(f"réseau indisponible ({e}), nouvel essai dans {pauses[essai] // 60} min ({essai + 1}/{len(pauses)})")
+            time.sleep(pauses[essai])
 
 def auto_maj():
     """Remplace ce script par la dernière version du dépôt si elle a changé."""
     if os.environ.get("AGENDA_ZGZ_MAJ"): return
     try:
-        neuf = http(f"{SELF_URL}?t={int(time.time())}", raw=True, timeout=30)
+        neuf = http(f"{SELF_URL}?t={int(time.time())}", raw=True, timeout=30, pauses=[])
         moi = os.path.abspath(__file__)
         if neuf and neuf != open(moi, "rb").read():
             compile(neuf, moi, "exec")
